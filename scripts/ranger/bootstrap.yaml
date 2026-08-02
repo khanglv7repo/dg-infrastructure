@@ -1,0 +1,104 @@
+version: 4
+
+# ---------------------------------------------------------------------------
+# Ranger bootstrap desired state for local development.
+#
+# This file is the single source of truth for Ranger infrastructure
+# prerequisites. It does NOT own:
+# - OpenMetadata users / reviewers / owners
+# - backend business tag policies
+# - runtime resource <-> tag mappings
+# ---------------------------------------------------------------------------
+
+# Business groups referenced by governance policies.
+groups:
+  - name: pii_readers
+    description: Readers allowed to access governed PII data.
+    groupType: 1
+    groupSource: 0
+    isVisible: 1
+
+  - name: payment_data_readers
+    description: Readers allowed to access governed payment-card data.
+    groupType: 1
+    groupSource: 0
+    isVisible: 1
+
+# Technical identities that Ranger must know because Trino/Ranger policies
+# reference them directly.
+#
+# IMPORTANT:
+# - This is NOT an OpenMetadata -> Ranger user sync.
+# - These users are Ranger policy principals only.
+# - No password/login credential is created here.
+# - In production, LDAP/AD/Keycloak/Ranger UserSync should usually own users.
+technical_users:
+  - name: governance-verifier-bot
+    description: Technical identity used by the governance verifier via Trino.
+    userSource: 1
+    status: 1
+    isVisible: 1
+    userRoleList:
+      - ROLE_USER
+
+# Ranger resource service used by Trino.
+# This used to live in ranger_service.yaml. Keeping it here removes a fragile
+# cross-file dependency and makes bootstrap.yaml the only desired-state file.
+resource_service:
+  name: dev_trino
+  type: trino
+  displayName: Development Trino
+  description: Ranger service instance for local Data Governance Trino.
+  isEnabled: true
+  configs:
+    username: trino
+    password: ""
+    jdbc.driverClassName: io.trino.jdbc.TrinoDriver
+    jdbc.url: jdbc:trino://trino:8080
+
+# Dedicated Ranger Tag service. Business tag policies are NOT declared here;
+# backend config/policies.yaml owns those policies and reconciles them at
+# backend startup.
+tag_service:
+  name: dev_tag
+  type: tag
+  displayName: Development Data Governance Tags
+  description: Tag-policy service for local Data Governance.
+  isEnabled: true
+  configs: {}
+
+# Baseline Trino authorization grants required before data/tag policies can be
+# evaluated. These are grants, not necessarily standalone policies.
+#
+# The reconciler reads the live Trino service definition to resolve the actual
+# Ranger resource/access names. If a Ranger default policy already owns the
+# exact resource (for example "all - queryid"), the grant is merged into that
+# policy instead of creating a duplicate-resource policy.
+system_grants:
+  - name: dg-system-governance-verifier-execute
+    description: Allow the governance verifier to execute Trino queries.
+    users:
+      - governance-verifier-bot
+    resource:
+      semantic: query_id
+      aliases:
+        - queryid
+        - query id
+      values:
+        - "*"
+    accesses:
+      - execute
+
+  - name: dg-system-governance-verifier-impersonate
+    description: Allow the governance verifier to use its own Trino identity.
+    users:
+      - governance-verifier-bot
+    resource:
+      semantic: trino_user
+      aliases:
+        - trinouser
+        - trino user
+      values:
+        - governance-verifier-bot
+    accesses:
+      - impersonate
