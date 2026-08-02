@@ -1,0 +1,271 @@
+name: ${COMPOSE_PROJECT_NAME:-dg}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:15.18-alpine}
+    container_name: dg-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_DB: postgres
+      OPENMETADATA_DB: ${OPENMETADATA_DB}
+      OPENMETADATA_DB_USER: ${OPENMETADATA_DB_USER}
+      OPENMETADATA_DB_PASSWORD: ${OPENMETADATA_DB_PASSWORD}
+      FINANCIAL_DB: ${FINANCIAL_DB}
+      TRINO_DB_USER: ${TRINO_DB_USER}
+      TRINO_DB_PASSWORD: ${TRINO_DB_PASSWORD}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [net]
+
+  opensearch:
+    image: ${OPENSEARCH_IMAGE:-opensearchproject/opensearch:2.19.1}
+    container_name: dg-os
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms768m -Xmx768m"
+    volumes:
+      - ./data/opensearch:/usr/share/opensearch/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS 'http://localhost:9200/_cluster/health?wait_for_status=yellow&wait_for_no_initializing_shards=true&timeout=5s' | grep -q '\"timed_out\":false'"
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 30s
+
+    networks: [net]
+
+  openmetadata:
+    image: openmetadata/server:${OPENMETADATA_VERSION:-1.13.1}
+    container_name: dg-om
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/opt/openmetadata/start-with-migration.sh"]
+    environment:
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_USE_SSL: "false"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${OPENMETADATA_DB_USER}
+      DB_USER_PASSWORD: ${OPENMETADATA_DB_PASSWORD}
+      OM_DATABASE: ${OPENMETADATA_DB}
+
+      ELASTICSEARCH_HOST: opensearch
+      ELASTICSEARCH_PORT: "9200"
+      ELASTICSEARCH_SCHEME: http
+      SEARCH_TYPE: opensearch
+
+      AUTHENTICATION_PROVIDER: basic
+      AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
+      AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
+      AUTHORIZER_ADMIN_PRINCIPALS: "[admin]"
+      AUTHORIZER_PRINCIPAL_DOMAIN: open-metadata.org
+      AUTHENTICATION_PUBLIC_KEYS: "[http://localhost:8585/api/v1/system/config/jwks]"
+
+      JWT_ISSUER: open-metadata.org
+      JWT_KEY_ID: ${OPENMETADATA_JWT_KEY_ID:-local-dev-key}
+      RSA_PUBLIC_KEY_FILE_PATH: ./conf/public_key.der
+      RSA_PRIVATE_KEY_FILE_PATH: ./conf/private_key.der
+
+      # Không dùng Airflow/Pipeline Service Client.
+      PIPELINE_SERVICE_CLIENT_ENABLED: "false"
+
+    ports:
+      - "8585:8585"
+      - "8586:8586"
+
+    volumes:
+      - ./docker/openmetadata/start-with-migration.sh:/opt/openmetadata/start-with-migration.sh:ro
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/8586 && printf 'GET /api/v1/health-check HTTP/1.0\r\n\r\n' >&3 && grep -q '200' <&3"
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 120s
+
+    networks: [net]
+
+  metadata-ingestion:
+    image: openmetadata/ingestion:${OPENMETADATA_VERSION:-1.13.1}
+    container_name: dg-ingest
+    restart: unless-stopped
+
+    command: ["python", "/app/runner.py"]
+
+    environment:
+      OPENMETADATA_HOST: http://openmetadata:8585/api
+      OM_INGESTION_BOT_TOKEN: ${OM_INGESTION_BOT_TOKEN}
+
+      INGESTION_SERVICE_NAME: ${INGESTION_SERVICE_NAME:-financial_postgres}
+      INGESTION_INTERVAL_SECONDS: ${INGESTION_INTERVAL_SECONDS:-3600}
+
+      # Flask API trong container
+      INGESTION_HTTP_HOST: 0.0.0.0
+      INGESTION_HTTP_PORT: "8080"
+
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DATABASE: ${FINANCIAL_DB}
+      POSTGRES_USER: ${TRINO_DB_USER}
+      POSTGRES_PASSWORD: ${TRINO_DB_PASSWORD}
+
+    # Host 8080 đã được Trino dùng.
+    # Flask ingestion API expose ra localhost:8081
+    ports:
+      - "127.0.0.1:8081:8080"
+
+    volumes:
+      - ./docker/metadata-ingestion/runner.py:/app/runner.py:ro
+
+    depends_on:
+      openmetadata:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)\""
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+    networks: [net]
+
+  ranger-db:
+    image: apache/ranger-db:${RANGER_VERSION:-2.8.0}
+    container_name: dg-rdb
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${RANGER_DB_PASSWORD}
+      RANGER_DB_USER: ${RANGER_DB_USER}
+      RANGER_DB_PASSWORD: ${RANGER_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:${RANGER_DB_HOST_PORT:-5433}:5432"
+    volumes:
+      - ./data/ranger-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RANGER_DB_USER} || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+    networks: [net]
+
+  ranger-solr:
+    image: apache/ranger-solr:${RANGER_VERSION:-2.8.0}
+    container_name: dg-rsolr
+    restart: unless-stopped
+    command:
+      [
+        "solr-precreate",
+        "ranger_audits",
+        "/opt/solr/server/solr/configsets/ranger_audits/"
+      ]
+    volumes:
+      - ./data/ranger-solr:/var/solr
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:8983/solr/ranger_audits/admin/ping >/dev/null || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+    networks: [net]
+
+  ranger-admin:
+    image: apache/ranger:${RANGER_VERSION:-2.8.0}
+    container_name: dg-ranger
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${RANGER_DB_PASSWORD}
+      RANGER_DB_USER: ${RANGER_DB_USER}
+      RANGER_DB_PASSWORD: ${RANGER_DB_PASSWORD}
+    ports:
+      - "6080:6080"
+    depends_on:
+      ranger-db:
+        condition: service_healthy
+      ranger-solr:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:6080/login.jsp >/dev/null || exit 1"
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 90s
+    networks:
+      net:
+        aliases:
+          - ranger-admin
+          - ranger-admin.rangernw
+
+  trino:
+    image: trinodb/trino:${TRINO_VERSION:-482}
+    container_name: dg-trino
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      TRINO_DB_PASSWORD: ${TRINO_DB_PASSWORD}
+    volumes:
+      - ./docker/trino/etc:/etc/trino:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ranger-admin:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:8080/v1/info | grep -q '\"starting\"[[:space:]]*:[[:space:]]*false'"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [net]
+
+networks:
+  net:
+    name: ${DOCKER_NETWORK_NAME:-dg-net}
+    driver: bridge
