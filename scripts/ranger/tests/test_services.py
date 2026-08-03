@@ -2,6 +2,15 @@ from __future__ import annotations
 
 import unittest
 
+import sys
+from pathlib import Path
+
+
+RANGER_DIR = Path(__file__).resolve().parents[1]
+if str(RANGER_DIR) not in sys.path:
+    sys.path.insert(0, str(RANGER_DIR))
+
+
 from reconcilers.services import _configs_match
 
 

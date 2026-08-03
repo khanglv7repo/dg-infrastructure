@@ -1,6 +1,6 @@
 # bootstrap.yaml Reference
 
-Schema version: `4`.
+Schema version: `5`.
 
 ## groups
 
@@ -10,15 +10,15 @@ principals, not OpenMetadata teams.
 ## technical_users
 
 Small set of local technical identities that Ranger policies reference directly.
-The bootstrap creates a missing principal through Ranger's external-user API and
+Bootstrap creates a missing principal through Ranger's external-user API and
 does not create a login password. Existing users are not mutated because they
 may be owned by LDAP/AD/UserSync.
 
 ## resource_service
 
-The Ranger service used by Trino. Default local name: `dev_trino`.
+Ranger service used by Trino. Default local name: `dev_trino`.
 
-Supported environment overrides:
+Environment overrides:
 
 ```text
 RANGER_RESOURCE_SERVICE_NAME
@@ -26,12 +26,11 @@ TRINO_SERVICE_NAME
 ```
 
 A blank `configs.password` means bootstrap does not take ownership of the stored
-secret. Ranger can mask passwords on reads, so ignoring a blank desired password
-prevents a false update on every run.
+secret. This avoids repeated updates when Ranger masks password values on reads.
 
 ## tag_service
 
-The Ranger tag-policy service. Default local name: `dev_tag`.
+Ranger tag-policy service. Default local name: `dev_tag`.
 
 Override:
 
@@ -41,16 +40,50 @@ RANGER_TAG_SERVICE_NAME
 
 ## system_grants
 
-Baseline Trino authorization grants that must pass before table/tag access can
-be evaluated.
+Baseline Trino authorization required before resource/tag policy evaluation.
+Each entry contains a fallback policy name, principals, one semantic resource,
+values, and access types. Names are resolved against the live Trino service
+definition.
 
-Each grant contains:
+Current local requirements:
 
-- a fallback policy `name`
-- `users` and/or `groups`
-- a semantic resource plus aliases
-- resource values
-- required access types
+```text
+Query ID=* -> governance-verifier-bot -> execute
+Trino User=governance-verifier-bot -> governance-verifier-bot -> impersonate
+```
 
-Resource/access names are resolved against the live Trino Ranger service
-definition instead of being hard-coded.
+## technical_data_grants
+
+Infrastructure data access for backend technical identities. It is not a PII
+business policy.
+
+Example:
+
+```yaml
+technical_data_grants:
+  - name: dg-technical-governance-verifier-financial-read
+    description: Allow the governance verifier to read the local financial catalog.
+    users:
+      - governance-verifier-bot
+    resources:
+      catalog: financial
+      schema: "*"
+      table: "*"
+      column: "*"
+    accesses:
+      - select
+```
+
+Resource values may be a string or list. Configured resources must form a
+contiguous path beginning at `catalog`:
+
+```text
+catalog
+catalog -> schema
+catalog -> schema -> table
+catalog -> schema -> table -> column
+```
+
+The reconciler validates the path against the live Ranger service definition
+and creates/merges a grant at every configured depth. The fallback policy names
+are suffixed with the depth (`-catalog`, `-schema`, `-table`, `-column`).

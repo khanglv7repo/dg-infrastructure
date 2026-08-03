@@ -58,16 +58,29 @@ def _resolve_named_item(
     )
 
 
+def resolve_resource_item(
+    service_def: dict[str, Any],
+    *,
+    semantic: str,
+    aliases: Iterable[str] = (),
+) -> dict[str, Any]:
+    return _resolve_named_item(
+        service_def.get("resources"),
+        [semantic, *aliases],
+        kind=f"resource {semantic!r}",
+    )
+
+
 def resolve_resource_name(
     service_def: dict[str, Any],
     *,
     semantic: str,
     aliases: Iterable[str],
 ) -> str:
-    item = _resolve_named_item(
-        service_def.get("resources"),
-        [semantic, *aliases],
-        kind=f"resource {semantic!r}",
+    item = resolve_resource_item(
+        service_def,
+        semantic=semantic,
+        aliases=aliases,
     )
     name = item.get("name")
     if not name:

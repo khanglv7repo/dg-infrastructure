@@ -12,7 +12,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 ENV_PATH = REPO_ROOT / ".env"
 BOOTSTRAP_CONFIG_PATH = SCRIPT_DIR / "bootstrap.yaml"
-BOOTSTRAP_SCHEMA_VERSION = 4
+BOOTSTRAP_SCHEMA_VERSION = 5
 
 
 class BootstrapConfigError(RuntimeError):
@@ -118,6 +118,48 @@ def load_bootstrap_config() -> dict[str, Any]:
         if not users and not groups_for_grant:
             raise BootstrapConfigError(
                 f"system_grants[{grant['name']!r}] requires a user or group"
+            )
+
+    data_grants = _require_non_empty_list(config, "technical_data_grants")
+    _validate_named_entries(data_grants, "technical_data_grants")
+    allowed_resources = {"catalog", "schema", "table", "column"}
+    for grant in data_grants:
+        users = grant.get("users", [])
+        groups_for_grant = grant.get("groups", [])
+        if not isinstance(users, list) or not isinstance(groups_for_grant, list):
+            raise BootstrapConfigError(
+                "technical_data_grants"
+                f"[{grant['name']!r}] users/groups must be lists"
+            )
+        if not users and not groups_for_grant:
+            raise BootstrapConfigError(
+                "technical_data_grants"
+                f"[{grant['name']!r}] requires a user or group"
+            )
+
+        resources = grant.get("resources")
+        if not isinstance(resources, dict) or not resources:
+            raise BootstrapConfigError(
+                "technical_data_grants"
+                f"[{grant['name']!r}] requires resources"
+            )
+        unknown = set(resources) - allowed_resources
+        if unknown:
+            raise BootstrapConfigError(
+                "technical_data_grants"
+                f"[{grant['name']!r}] has unknown resources: {sorted(unknown)}"
+            )
+        if "catalog" not in resources:
+            raise BootstrapConfigError(
+                "technical_data_grants"
+                f"[{grant['name']!r}] requires catalog"
+            )
+
+        accesses = grant.get("accesses")
+        if not isinstance(accesses, list) or not accesses:
+            raise BootstrapConfigError(
+                "technical_data_grants"
+                f"[{grant['name']!r}] requires accesses"
             )
 
     return config

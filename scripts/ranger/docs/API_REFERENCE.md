@@ -9,8 +9,8 @@ Admin instance.
 GET /service/public/v2/api/servicedef/name/{name}
 ```
 
-Used to discover the actual Trino resource and access names before creating
-system grants.
+Used before policy writes to resolve actual Trino resource/access names and to
+validate the `catalog -> schema -> table -> column` hierarchy.
 
 ## Services
 
@@ -20,7 +20,7 @@ POST /service/public/v2/api/service
 PUT  /service/public/v2/api/service/name/{name}
 ```
 
-Used for `dev_trino`, `dev_tag`, and the `tagService` association field.
+Used for `dev_trino`, `dev_tag`, and the `tagService` association.
 
 ## Groups
 
@@ -49,5 +49,6 @@ POST /service/public/v2/api/policy
 PUT  /service/public/v2/api/service/{service}/policy/{policy}
 ```
 
-The list endpoint is required so bootstrap can locate an existing policy with an
-exact matching resource and merge a baseline grant into it.
+The list endpoint lets bootstrap locate an existing policy with an exact matching
+resource. Both system and technical-data reconcilers merge their missing grant
+into that policy instead of creating a conflicting duplicate.

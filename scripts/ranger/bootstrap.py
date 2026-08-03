@@ -19,6 +19,7 @@ from reconcilers.associations import reconcile_tag_service_association
 from reconcilers.groups import reconcile_groups
 from reconcilers.services import reconcile_service
 from reconcilers.system_grants import reconcile_system_grants
+from reconcilers.technical_data_grants import reconcile_technical_data_grants
 from reconcilers.technical_users import reconcile_technical_users
 
 
@@ -196,6 +197,23 @@ def main() -> None:
                 action,
             )
         all_results.extend(grant_results)
+
+        data_grant_results = reconcile_technical_data_grants(
+            client,
+            _dict_list(
+                config["technical_data_grants"],
+                "technical_data_grants",
+            ),
+            service_name=resource_name,
+            service_def=trino_service_def,
+        )
+        for action, policy in data_grant_results:
+            logger.success(
+                "Technical data grant ready | policy={} | action={}",
+                policy.get("name"),
+                action,
+            )
+        all_results.extend(data_grant_results)
 
     logger.success(
         "Ranger bootstrap completed successfully | {}",

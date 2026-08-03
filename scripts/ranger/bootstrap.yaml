@@ -1,4 +1,4 @@
-version: 4
+version: 5
 
 # ---------------------------------------------------------------------------
 # Ranger bootstrap desired state for local development.
@@ -102,3 +102,26 @@ system_grants:
         - governance-verifier-bot
     accesses:
       - impersonate
+
+# Technical data access required by backend scanner/verifier identities.
+#
+# This is infrastructure access for the technical principal, NOT a business
+# PII role. The reconciler expands this logical scope into grants at each
+# Trino hierarchy depth (catalog, schema, table, column), because Trino checks
+# those resources separately for browse/metadata/select operations.
+#
+# Resource names are validated/resolved against the live Ranger Trino service
+# definition before any policy is written.
+technical_data_grants:
+  - name: dg-technical-governance-verifier-financial-read
+    description: Allow the governance verifier to read the local financial catalog.
+    users:
+      - governance-verifier-bot
+    resources:
+      catalog: financial
+      schema: "*"
+      table: "*"
+      column: "*"
+    accesses:
+      - select
+
