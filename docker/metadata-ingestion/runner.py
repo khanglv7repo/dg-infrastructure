@@ -331,39 +331,12 @@ def run_now():
     )
 
 
-def scheduler_loop() -> None:
-    while True:
-        try:
-            result = runner.run_once()
-
-            if result is None:
-                print(
-                    "Scheduled ingestion skipped: "
-                    "another ingestion is already running",
-                    flush=True,
-                )
-
-        except Exception as exc:
-            print(
-                f"Scheduled metadata ingestion error: {exc}",
-                flush=True,
-            )
-
-        time.sleep(INTERVAL_SECONDS)
-
-
-def start_scheduler() -> None:
-    thread = threading.Thread(
-        target=scheduler_loop,
-        name="metadata-ingestion-scheduler",
-        daemon=True,
-    )
-    thread.start()
-
-
 def main() -> None:
-    start_scheduler()
-
+    print(
+        f"Starting metadata ingestion runner API on {HTTP_HOST}:{HTTP_PORT} "
+        "(scheduled runs owned by Celery Beat)",
+        flush=True,
+    )
     app.run(
         host=HTTP_HOST,
         port=HTTP_PORT,
