@@ -265,6 +265,34 @@ services:
       start_period: 30s
     networks: [net]
 
+  redis:
+    image: redis:7-alpine
+    container_name: dg-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [net]
+
+  flower:
+    image: mher/flower:2.0
+    container_name: dg-flower
+    restart: unless-stopped
+    command: ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
+    ports:
+      - "127.0.0.1:5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [net]
+
 networks:
   net:
     name: ${DOCKER_NETWORK_NAME:-dg-net}
