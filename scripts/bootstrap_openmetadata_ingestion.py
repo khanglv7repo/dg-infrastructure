@@ -1,3 +1,28 @@
+"""Create/reuse and deploy an OpenMetadata-native metadata ingestion pipeline.
+
+TASK-10 AUDIT (2026-09-24): this script's `deploy` step
+(`POST v1/services/ingestionPipelines/deploy/{id}`) triggers OM's own
+Airflow/pipeline-service-client execution mechanism. This architecture
+deliberately disables that mechanism (`PIPELINE_SERVICE_CLIENT_ENABLED=false`
+in `infrastructure/docker-compose.yml`'s `openmetadata` service, per
+`docs/13_IMPLEMENTATION_SPEC.md`'s B2 finding) -- actual metadata ingestion
+runs through the separate `metadata-ingestion` container
+(`docker/metadata-ingestion/runner.py`, a custom Python runner, not OM's
+pipeline-service). Confirmed via `rg` that no other file in this repo calls
+this script (no Makefile target, no other script, no doc besides its own
+manifest row references it).
+
+This strongly suggests the script predates the `PIPELINE_SERVICE_CLIENT_
+ENABLED=false` decision and may no longer serve a real purpose in this
+deployment -- the `deploy` call likely fails or no-ops since nothing consumes
+OM-native pipeline deployments here. NOT deleted per
+`planning/03-CODE-EDIT-MANIFEST.md` rule 6 (no removal before caller search +
+replacement + rollback all pass) and per explicit user decision this session
+to flag rather than remove. Before relying on or removing this script,
+confirm live whether `ensure_metadata_pipeline(deploy=True)` actually
+succeeds against the running `dg-om` container, or investigate replacing it
+with an equivalent idempotency check against `dg-ingest`'s own runner state.
+"""
 from __future__ import annotations
 
 import argparse

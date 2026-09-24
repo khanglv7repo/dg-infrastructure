@@ -1,81 +1,13 @@
-# from __future__ import annotations
+"""Metadata ingestion runner: Flask HTTP wrapper around the `metadata ingest`
+CLI, running on a timer inside the `dg-ingest` container.
 
-# import os
-# import subprocess
-# import time
-# from pathlib import Path
-
-# import yaml
-
-# INTERVAL_SECONDS = int(os.getenv("INGESTION_INTERVAL_SECONDS", "3600"))
-# OPENMETADATA_HOST = os.environ["OPENMETADATA_HOST"]
-# INGESTION_BOT_TOKEN = os.environ["OM_INGESTION_BOT_TOKEN"].strip()
-
-# if not INGESTION_BOT_TOKEN:
-#     raise RuntimeError("OM_INGESTION_BOT_TOKEN must be configured for metadata ingestion")
-
-
-# def build_ingestion_config() -> dict:
-#     return {
-#         "source": {
-#             "type": "postgres",
-#             "serviceName": os.getenv("INGESTION_SERVICE_NAME", "financial_postgres"),
-#             "serviceConnection": {
-#                 "config": {
-#                     "type": "Postgres",
-#                     "scheme": "postgresql+psycopg2",
-#                     "username": os.environ["POSTGRES_USER"],
-#                     "authType": {"password": os.environ["POSTGRES_PASSWORD"]},
-#                     "hostPort": f"{os.environ['POSTGRES_HOST']}:{os.environ['POSTGRES_PORT']}",
-#                     "database": os.environ["POSTGRES_DATABASE"],
-#                 }
-#             },
-#             "sourceConfig": {
-#                 "config": {
-#                     "type": "DatabaseMetadata",
-#                     "includeTables": True,
-#                     "includeViews": True,
-#                     "markDeletedTables": True,
-#                     "markDeletedSchemas": True,
-#                 }
-#             },
-#         },
-#         "sink": {"type": "metadata-rest", "config": {}},
-#         "workflowConfig": {
-#             "loggerLevel": "INFO",
-#             "openMetadataServerConfig": {
-#                 "hostPort": OPENMETADATA_HOST,
-#                 "authProvider": "openmetadata",
-#                 "securityConfig": {"jwtToken": INGESTION_BOT_TOKEN},
-#             },
-#         },
-#     }
-
-
-# def run_once() -> int:
-#     Path("/tmp/ingestion.yaml").write_text(
-#         yaml.safe_dump(build_ingestion_config(), sort_keys=False), encoding="utf-8"
-#     )
-#     result = subprocess.run(["metadata", "ingest", "-c", "/tmp/ingestion.yaml"], check=False)
-#     if result.returncode == 0:
-#         Path("/tmp/metadata-ingestion-ready").touch()
-#         print("Metadata ingestion completed", flush=True)
-#     else:
-#         print(f"Metadata ingestion failed with exit code {result.returncode}", flush=True)
-#     return result.returncode
-
-
-# def main() -> None:
-#     while True:
-#         try:
-#             run_once()
-#         except Exception as exc:
-#             print(f"Metadata ingestion error: {exc}", flush=True)
-#         time.sleep(INTERVAL_SECONDS)
-
-
-# if __name__ == "__main__":
-#     main()
+TASK-10 (2026-09-24): removed a ~78-line fully-commented-out earlier version
+of this module (a simpler, non-Flask, no-health-check `metadata ingest` CLI
+loop) per `planning/03-CODE-EDIT-MANIFEST.md`'s own instruction ("remove the
+duplicate commented implementation"). The real, active implementation below
+is unchanged and is what `dg-ingest` has been running (confirmed healthy via
+`docker ps` before this edit).
+"""
 from __future__ import annotations
 
 import os

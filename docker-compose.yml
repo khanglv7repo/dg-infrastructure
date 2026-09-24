@@ -15,9 +15,24 @@ services:
       FINANCIAL_DB: ${FINANCIAL_DB}
       TRINO_DB_USER: ${TRINO_DB_USER}
       TRINO_DB_PASSWORD: ${TRINO_DB_PASSWORD}
+      # TASK-10: Backend/Agent database separation (see .env.example for the
+      # full rationale). Consumed by docker/postgres-init/01-init.sh.
+      GOVERNANCE_DB: ${GOVERNANCE_DB}
+      GOVERNANCE_DB_USER: ${GOVERNANCE_DB_USER}
+      GOVERNANCE_DB_PASSWORD: ${GOVERNANCE_DB_PASSWORD}
+      AGENT_CHECKPOINT_DB: ${AGENT_CHECKPOINT_DB}
+      AGENT_CHECKPOINT_DB_USER: ${AGENT_CHECKPOINT_DB_USER}
+      AGENT_CHECKPOINT_DB_PASSWORD: ${AGENT_CHECKPOINT_DB_PASSWORD}
     ports: ["127.0.0.1:5432:5432"]
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      # TASK-10 hardening: runtime data bind sources must already exist.
+      # Docker Compose short syntax silently creates missing host paths, which
+      # can mask data loss by booting an empty database.
+      - type: bind
+        source: ./data/postgres
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER} -d postgres"]
@@ -36,7 +51,11 @@ services:
       DISABLE_INSTALL_DEMO_CONFIG: "true"
       OPENSEARCH_JAVA_OPTS: "-Xms768m -Xmx768m"
     volumes:
-      - ./data/opensearch:/usr/share/opensearch/data
+      - type: bind
+        source: ./data/opensearch
+        target: /usr/share/opensearch/data
+        bind:
+          create_host_path: false
 
     healthcheck:
       test:
@@ -52,7 +71,7 @@ services:
     networks: [net]
 
   openmetadata:
-    image: openmetadata/server:${OPENMETADATA_VERSION:-1.13.1}
+    image: openmetadata/server:${OPENMETADATA_VERSION:-2.0.2}
     container_name: dg-om
     restart: unless-stopped
     entrypoint: ["/bin/bash", "/opt/openmetadata/start-with-migration.sh"]
@@ -70,6 +89,12 @@ services:
       ELASTICSEARCH_PORT: "9200"
       ELASTICSEARCH_SCHEME: http
       SEARCH_TYPE: opensearch
+
+      # A4 POC (docs/09_POC_SPECIFICATION.md): semantic search with local DJL embedding
+      # provider — no external API key required, per docs/DG_FINAL_SPEC.md section 10.
+      SEMANTIC_SEARCH_ENABLED: "true"
+      LLM_ENABLED: "true"
+      EMBEDDING_PROVIDER: djl
 
       AUTHENTICATION_PROVIDER: basic
       AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
@@ -103,7 +128,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "exec 3<>/dev/tcp/127.0.0.1/8586 && printf 'GET /api/v1/health-check HTTP/1.0\r\n\r\n' >&3 && grep -q '200' <&3"
+          "bash -c \"exec 3<>/dev/tcp/127.0.0.1/8586 && printf 'GET /healthcheck HTTP/1.0\r\n\r\n' >&3 && grep -q '200 OK' <&3\""
         ]
       interval: 15s
       timeout: 10s
@@ -113,7 +138,7 @@ services:
     networks: [net]
 
   metadata-ingestion:
-    image: openmetadata/ingestion:${OPENMETADATA_VERSION:-1.13.1}
+    image: openmetadata/ingestion:${OPENMETADATA_VERSION:-2.0.2}
     container_name: dg-ingest
     restart: unless-stopped
 
@@ -174,7 +199,11 @@ services:
     ports:
       - "127.0.0.1:${RANGER_DB_HOST_PORT:-5433}:5432"
     volumes:
-      - ./data/ranger-db:/var/lib/postgresql/data
+      - type: bind
+        source: ./data/ranger-db
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${RANGER_DB_USER} || exit 1"]
       interval: 10s
@@ -194,7 +223,11 @@ services:
         "/opt/solr/server/solr/configsets/ranger_audits/"
       ]
     volumes:
-      - ./data/ranger-solr:/var/solr
+      - type: bind
+        source: ./data/ranger-solr
+        target: /var/solr
+        bind:
+          create_host_path: false
     healthcheck:
       test:
         [
@@ -273,7 +306,11 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
-      - ./data/redis:/data
+      - type: bind
+        source: ./data/redis
+        target: /data
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
