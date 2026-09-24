@@ -98,6 +98,20 @@ system_grants:
     accesses:
       - execute
 
+  - name: dg-system-governance-policy-verifier-impersonate
+    description: Allow the policy verifier to use its own Trino identity.
+    users:
+      - governance-policy-verifier-bot
+    resource:
+      semantic: trino_user
+      aliases:
+        - trinouser
+        - trino user
+      values:
+        - governance-policy-verifier-bot
+    accesses:
+      - impersonate
+
   - name: dg-system-governance-verifier-impersonate
     description: Allow the governance verifier to use its own Trino identity.
     users:
