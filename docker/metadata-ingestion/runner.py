@@ -14,12 +14,13 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 
 CONFIG_PATH = Path("/tmp/ingestion.yaml")
@@ -31,6 +32,8 @@ HTTP_PORT = int(os.getenv("INGESTION_HTTP_PORT", "8080"))
 
 OPENMETADATA_HOST = os.environ["OPENMETADATA_HOST"]
 INGESTION_BOT_TOKEN = os.environ["OM_INGESTION_BOT_TOKEN"].strip()
+EXECUTION_BOT_TOKEN = os.getenv("OM_EXECUTION_BOT_TOKEN", "").strip()
+WORKFLOW_LOCK = threading.Lock()
 
 if not INGESTION_BOT_TOKEN:
     raise RuntimeError(
@@ -100,7 +103,7 @@ class RunResult:
 
 class IngestionRunner:
     def __init__(self) -> None:
-        self._run_lock = threading.Lock()
+        self._run_lock = WORKFLOW_LOCK
         self._state_lock = threading.Lock()
 
         self._running = False
@@ -208,6 +211,108 @@ class IngestionRunner:
             self._last_finished_at = time.time()
 
 
+
+def build_dq_config(
+    *,
+    table_fqn: str,
+    test_suite_fqn: str,
+    test_case_name: str,
+) -> dict[str, Any]:
+    """Build the OpenMetadata 2.0.2 TestSuiteWorkflow config.
+
+    The workflow reads the table service connection and the existing TestCase
+    from OpenMetadata. No database credential is accepted from the caller.
+    """
+    if not EXECUTION_BOT_TOKEN:
+        raise RuntimeError(
+            "OM_EXECUTION_BOT_TOKEN must be configured for DQ execution"
+        )
+
+    return {
+        "source": {
+            "type": "TestSuite",
+            "serviceName": test_suite_fqn,
+            "sourceConfig": {
+                "config": {
+                    "type": "TestSuite",
+                    "entityFullyQualifiedName": table_fqn,
+                    "testCases": [test_case_name],
+                }
+            },
+        },
+        "processor": {
+            "type": "orm-test-runner",
+            "config": {},
+        },
+        "sink": {
+            "type": "metadata-rest",
+            "config": {},
+        },
+        "workflowConfig": {
+            "loggerLevel": "INFO",
+            "raiseOnError": False,
+            "openMetadataServerConfig": {
+                "hostPort": OPENMETADATA_HOST,
+                "authProvider": "openmetadata",
+                "securityConfig": {
+                    "jwtToken": EXECUTION_BOT_TOKEN,
+                },
+            },
+        },
+    }
+
+
+def run_dq_once(
+    *,
+    table_fqn: str,
+    test_suite_fqn: str,
+    test_case_name: str,
+) -> RunResult | None:
+    """Run one existing TestCase through OpenMetadata's native DQ workflow."""
+    if not WORKFLOW_LOCK.acquire(blocking=False):
+        return None
+
+    started_monotonic = time.monotonic()
+    config_path = Path(f"/tmp/dq-{uuid.uuid4()}.yaml")
+    try:
+        config_path.write_text(
+            yaml.safe_dump(
+                build_dq_config(
+                    table_fqn=table_fqn,
+                    test_suite_fqn=test_suite_fqn,
+                    test_case_name=test_case_name,
+                ),
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        process = subprocess.run(
+            [
+                "metadata",
+                "test",
+                "-c",
+                str(config_path),
+            ],
+            check=False,
+        )
+        return RunResult(
+            exit_code=process.returncode,
+            duration_seconds=time.monotonic() - started_monotonic,
+        )
+    finally:
+        config_path.unlink(missing_ok=True)
+        WORKFLOW_LOCK.release()
+
+
+def _required_string(payload: dict[str, Any], name: str, *, maximum: int = 3072) -> str:
+    value = str(payload.get(name) or "").strip()
+    if not value:
+        raise ValueError(f"{name} is required")
+    if len(value) > maximum:
+        raise ValueError(f"{name} exceeds maximum length {maximum}")
+    return value
+
+
 runner = IngestionRunner()
 app = Flask(__name__)
 
@@ -262,6 +367,82 @@ def run_now():
         }
     )
 
+
+
+@app.post("/dq/run")
+def run_dq():
+    """Execute one already-materialized DQ TestCase.
+
+    This endpoint is internal to the Docker network. Backend supplies entity
+    identity only; database credentials are resolved by OpenMetadata's
+    TestSuiteWorkflow using the approved Execution Bot identity.
+    """
+    payload = request.get_json(silent=True) or {}
+    try:
+        table_fqn = _required_string(payload, "table_fqn")
+        test_suite_fqn = _required_string(payload, "test_suite_fqn")
+        test_case_name = _required_string(payload, "test_case_name", maximum=255)
+    except ValueError as exc:
+        return jsonify({"status": "invalid", "message": str(exc)}), 400
+
+    if not EXECUTION_BOT_TOKEN:
+        return (
+            jsonify(
+                {
+                    "status": "unavailable",
+                    "message": "OM_EXECUTION_BOT_TOKEN is not configured",
+                }
+            ),
+            503,
+        )
+
+    try:
+        result = run_dq_once(
+            table_fqn=table_fqn,
+            test_suite_fqn=test_suite_fqn,
+            test_case_name=test_case_name,
+        )
+    except Exception as exc:
+        return (
+            jsonify(
+                {
+                    "status": "failed",
+                    "message": str(exc)[:1000],
+                }
+            ),
+            500,
+        )
+
+    if result is None:
+        return (
+            jsonify(
+                {
+                    "status": "busy",
+                    "message": "another ingestion/DQ workflow is already running",
+                }
+            ),
+            409,
+        )
+
+    if not result.succeeded:
+        return (
+            jsonify(
+                {
+                    "status": "failed",
+                    "exit_code": result.exit_code,
+                    "duration_seconds": result.duration_seconds,
+                }
+            ),
+            500,
+        )
+
+    return jsonify(
+        {
+            "status": "completed",
+            "exit_code": result.exit_code,
+            "duration_seconds": result.duration_seconds,
+        }
+    )
 
 def main() -> None:
     print(
