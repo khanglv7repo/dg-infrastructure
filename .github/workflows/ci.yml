@@ -27,4 +27,4 @@ jobs:
         run: python -m compileall -q docker/metadata-ingestion/runner.py tests scripts/ranger
 
       - name: Test integration contracts
-        run: pytest -q tests/test_metadata_ingestion_runner.py scripts/ranger/tests
+        run: pytest -q tests scripts/ranger/tests
