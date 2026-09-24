@@ -33,8 +33,16 @@ groups:
 # - No password/login credential is created here.
 # - In production, LDAP/AD/Keycloak/Ranger UserSync should usually own users.
 technical_users:
+  - name: governance-policy-verifier-bot
+    description: Policy subject used for runtime ALLOW/DENY/MASK/ROW_FILTER verification.
+    userSource: 1
+    status: 1
+    isVisible: 1
+    userRoleList:
+      - ROLE_USER
+
   - name: governance-verifier-bot
-    description: Technical identity used by the governance verifier via Trino.
+    description: Independent control identity with baseline unmasked/unfiltered read access.
     userSource: 1
     status: 1
     isVisible: 1
@@ -78,6 +86,7 @@ system_grants:
   - name: dg-system-governance-verifier-execute
     description: Allow the governance verifier to execute Trino queries.
     users:
+      - governance-policy-verifier-bot
       - governance-verifier-bot
     resource:
       semantic: query_id
