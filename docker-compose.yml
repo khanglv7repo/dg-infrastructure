@@ -90,11 +90,17 @@ services:
       ELASTICSEARCH_SCHEME: http
       SEARCH_TYPE: opensearch
 
-      # A4 POC (docs/09_POC_SPECIFICATION.md): semantic search with local DJL embedding
-      # provider — no external API key required, per docs/DG_FINAL_SPEC.md section 10.
+      # A4 POC (docs/09_POC_SPECIFICATION.md): semantic search with OpenAI embeddings.
+      # OpenMetadata 2.0.2 reads OpenAI credentials from llmConfiguration.openai
+      # (LLM_OPENAI_API_KEY), while embedding model selection remains under
+      # llmConfiguration.embeddings (OPENAI_EMBEDDING_MODEL_ID/DIMENSION).
       SEMANTIC_SEARCH_ENABLED: "true"
       LLM_ENABLED: "true"
-      EMBEDDING_PROVIDER: djl
+      LLM_PROVIDER: openai
+      LLM_OPENAI_API_KEY: ${LLM_OPENAI_API_KEY:-}
+      EMBEDDING_PROVIDER: openai
+      OPENAI_EMBEDDING_MODEL_ID: ${OPENAI_EMBEDDING_MODEL_ID:-text-embedding-3-small}
+      OPENAI_EMBEDDING_DIMENSION: ${OPENAI_EMBEDDING_DIMENSION:-1536}
 
       AUTHENTICATION_PROVIDER: basic
       AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
@@ -328,6 +334,75 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    networks: [net]
+
+  langgraph-agent:
+    # TASK-09: LangGraph API server for app/graph.py (Studio UI / HTTP access
+    # to the same graph GovernanceAgentRunner/the Celery worker already call
+    # in-process -- this is an additional access path, not a replacement).
+    #
+    # Runs `langgraph dev` (agent/Dockerfile), NOT `langgraph build`'s own
+    # production image -- found live: that image is the "licensed" variant
+    # and refuses to start without LANGSMITH_API_KEY/LANGGRAPH_CLOUD_LICENSE_KEY
+    # ("License verification failed"). `langgraph dev` has no such
+    # requirement. The graph's own checkpoint state still persists for real
+    # to the dedicated agent_checkpoint_db Postgres database regardless
+    # (app/checkpointer.py, wired in app/langgraph_entry.py:graph()) -- only
+    # the LangGraph API server's own run/thread bookkeeping layer is
+    # in-memory in this mode, not the graph state itself.
+    #
+    # Rebuild after any agent/ code change:
+    #   cd agent && docker build -t dg-agent-langgraph:dev -f Dockerfile .
+    image: dg-agent-langgraph:dev
+    container_name: dg-agent-langgraph
+    restart: unless-stopped
+    # Agent's own runtime env (LLM, Backend MCP/REST URLs, OM bot token,
+    # AGENT_CHECKPOINT_DB* credentials, kill switches) -- one place
+    # (agent/.env) owns these values; not duplicated into compose-level vars.
+    env_file:
+      - ../agent/.env
+    environment:
+      # agent/.env's own OPENMETADATA_MCP_URL/BACKEND_MCP_URL/BACKEND_API_URL/
+      # AGENT_CHECKPOINT_DB_HOST all point at localhost/127.0.0.1, correct
+      # when the Agent runs bare-metal on the host (Backend/OM's MCP/REST
+      # processes also run outside Compose, confirmed live -- see this
+      # session's TASK-08 audit). From inside this container, "localhost"
+      # means the container itself, not the host.
+      #
+      # AGENT_CHECKPOINT_DB_HOST -> postgres: dg-pg runs IN this same Compose
+      # network (dg-net), reachable by its service name directly -- found
+      # live that host.docker.internal resolves to the default bridge
+      # network's gateway (172.17.0.1), NOT dg-net, so it could not reach
+      # dg-pg ("connection to server at 172.17.0.1, port 5432 ... Connection
+      # refused").
+      #
+      # OM/Backend MCP/REST URLs -> host.docker.internal: those processes
+      # genuinely run bare-metal on the host, outside Compose entirely, so
+      # they need the host-gateway route (extra_hosts below).
+      AGENT_CHECKPOINT_DB_HOST: postgres
+      OPENMETADATA_MCP_URL: http://host.docker.internal:8585/mcp
+      BACKEND_MCP_URL: http://host.docker.internal:8001/mcp
+      BACKEND_API_URL: http://host.docker.internal:8000/api/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Opened to every interface (not just 127.0.0.1) so Agent Chat UI can
+      # reach this from another machine on the LAN -- user explicitly
+      # approved this after hitting the exact symptom (UI on a different
+      # machine, localhost:2024 in its browser resolved to itself, not this
+      # host). Safe only on a trusted local network, not the public internet.
+      - "2024:2024"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:2024/docs >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
     networks: [net]
 
 networks:
