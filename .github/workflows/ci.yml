@@ -24,7 +24,7 @@ jobs:
         run: python -m pip install pytest flask pyyaml python-dotenv requests httpx
 
       - name: Compile integration code
-        run: python -m compileall -q docker/metadata-ingestion/runner.py tests scripts/ranger
+        run: python -m compileall -q docker/metadata-ingestion/runner.py scripts/verify_governance_runtime.py tests scripts/ranger
 
       - name: Test integration contracts
         run: pytest -q tests scripts/ranger/tests
