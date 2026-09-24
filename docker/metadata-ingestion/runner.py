@@ -1,12 +1,10 @@
-"""Metadata ingestion runner: Flask HTTP wrapper around the `metadata ingest`
-CLI, running on a timer inside the `dg-ingest` container.
+"""External OpenMetadata workflow runner.
 
-TASK-10 (2026-09-24): removed a ~78-line fully-commented-out earlier version
-of this module (a simpler, non-Flask, no-health-check `metadata ingest` CLI
-loop) per `planning/03-CODE-EDIT-MANIFEST.md`'s own instruction ("remove the
-duplicate commented implementation"). The real, active implementation below
-is unchanged and is what `dg-ingest` has been running (confirmed healthy via
-`docker ps` before this edit).
+Owns two CLI workflows inside the openmetadata/ingestion container:
+- scheduled/on-demand metadata ingestion via metadata ingest;
+- approved DQ execution via metadata test.
+
+A shared process lock prevents both workflows from running concurrently.
 """
 from __future__ import annotations
 
@@ -323,13 +321,18 @@ def health():
         {
             "status": "ok",
             "running": runner.is_running,
+            "workflow_busy": WORKFLOW_LOCK.locked(),
+            "dq_execution_configured": bool(EXECUTION_BOT_TOKEN),
         }
     )
 
 
 @app.get("/status")
 def status():
-    return jsonify(runner.status())
+    value = runner.status()
+    value["workflow_busy"] = WORKFLOW_LOCK.locked()
+    value["dq_execution_configured"] = bool(EXECUTION_BOT_TOKEN)
+    return jsonify(value)
 
 
 @app.post("/run-now")
