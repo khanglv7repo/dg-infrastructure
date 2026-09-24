@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - hotfix/architecture-correctness-2026-09-24
+  pull_request:
+
+jobs:
+  runner-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: python -m pip install pytest flask pyyaml
+
+      - name: Compile runner
+        run: python -m compileall -q docker/metadata-ingestion/runner.py tests
+
+      - name: Test runner
+        run: pytest -q tests/test_metadata_ingestion_runner.py
