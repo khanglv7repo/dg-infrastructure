@@ -128,3 +128,44 @@ has reconciled the corresponding Ranger ServiceTags/resource association.
 
 Use explicit test principals for business-role checks; do not treat the control
 identity as a substitute for a business user/group.
+
+
+## 8. End-to-end live smoke harness
+
+Use only a dedicated integration-test table. The harness activates real policy
+versions and therefore mutates Ranger desired state.
+
+Install the local client dependency:
+
+```bash
+python -m pip install trino
+```
+
+Example:
+
+```bash
+export DG_VERIFY_ALLOW_POLICY_MUTATION=true
+export DG_VERIFY_TABLE_FQN=financial.test_schema.governance_verification_fixture
+export DG_VERIFY_MASK_COLUMN=email
+export DG_VERIFY_ROW_FILTER="region = 'VN'"
+
+# Optional overrides:
+export DG_BACKEND_URL=http://127.0.0.1:8000/api/v1
+export DG_TRINO_HOST=127.0.0.1
+export DG_TRINO_PORT=8080
+export DG_POLICY_USER=governance-policy-verifier-bot
+export DG_CONTROL_USER=governance-verifier-bot
+
+python scripts/verify_governance_runtime.py
+```
+
+The fixture must satisfy both evidence requirements before the harness changes
+policy state:
+
+1. `DG_VERIFY_MASK_COLUMN` has at least one non-null value visible to the
+   control identity.
+2. The control identity sees at least one row where
+   `NOT (DG_VERIFY_ROW_FILTER)` is true.
+
+Without those conditions MASK/ROW_FILTER cannot be distinguished from source
+data and the harness fails instead of producing a false pass.
