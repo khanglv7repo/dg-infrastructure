@@ -220,6 +220,16 @@ def assert_control_evidence(config: Config) -> None:
 
 
 def main() -> None:
+    if os.getenv("DG_VERIFY_ALLOW_POLICY_MUTATION", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+    }:
+        raise SystemExit(
+            "Set DG_VERIFY_ALLOW_POLICY_MUTATION=true only for a dedicated "
+            "integration-test table; the smoke test activates real Ranger policies."
+        )
+
     config = Config.from_env()
     if config.policy_user == config.control_user:
         raise SystemExit("policy verifier and control verifier must differ")
